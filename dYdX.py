@@ -26,16 +26,16 @@ class Discord():
 
 class DYDX():
     def __init__(self):
-        w3 = Web3(Web3.HTTPProvider(os.getenv('GOERLI_RPC')))
+        w3 = Web3(Web3.HTTPProvider(os.getenv('MAINNET_RPC')))
         self.client = Client(
-            network_id=NETWORK_ID_GOERLI,
+            network_id=NETWORK_ID_MAINNET,
             api_key_credentials={
                 'passphrase':os.getenv('PASSPHRASE'),
                 'key':os.getenv('KEY'),
                 'secret':os.getenv('SECRET')
             },
             stark_private_key=os.getenv('STARK_PK'),
-            host=API_HOST_GOERLI,
+            host=API_HOST_MAINNET,
             default_ethereum_address=os.getenv('DEFAULT_ADDR'),
             web3=w3
         )
@@ -88,9 +88,13 @@ class DYDX():
         status_of_order = order.data['order']['status']
         account_data = self.get_account_data()
         if status_of_order == 'FILLED':
-            print(f'Order filled on DYDX, size is: {size}. Current account data is: {account_data}')
+            text = f'Order filled on DYDX, size is: {size}. Current account data is: {account_data}'
+            Discord().send_message(text)
+            print(text)
         else:
-            print(f"Order wasn't filled on DYDX, size is: {size}. Current account data is: {account_data}")
+            text = f"Order wasn't filled on DYDX, size is: {size}. Current account data is: {account_data}"
+            Discord().send_message(text)
+            print(text)
 
     def is_filled(self, order_id):
         order = self.client.private.get_order_by_id(order_id)
@@ -106,15 +110,19 @@ class DYDX():
 
 class Rage():
     def __init__(self):
-        w3 = Web3(Web3.HTTPProvider(os.getenv('ARBITRUM_GOERLI_RPC')))
+        w3 = Web3(Web3.HTTPProvider(os.getenv('ARBITRUM_RPC')))
         self.w3 = w3
-        self.clearing_house = w3.eth.contract(address=GOERLI_CLEARING_HOUSE_ADDR, abi=CLEARING_HOUSE_ABI)
-        self.simulate = w3.eth.contract(address=GOERLI_SIMULATOR_ADDR, abi=SIMULATOR_ABI)
-        self.pool_id = 2836635727
-        self.account_id = 1750
+        self.clearing_house = w3.eth.contract(address=MAINNET_CLEARING_HOUSE_ADDR, abi=CLEARING_HOUSE_ABI)
+        self.simulate = w3.eth.contract(address=MAINNET_SIMULATOR_ADDR, abi=SIMULATOR_ABI)
+        self.pool_id = 2721558366
+        self.account_id = 10491
 
     def get_sqrtprice(self, price):
-        return int((price ** 0.5) * (2 ** 96) / 10e5)
+        return int((price ** 0.5) * (2 ** 96) / 1e6)
+    
+    def get_perp_price(self):
+        num = self.clearing_house.functions.getVirtualTwapPriceX128(self.pool_id).call()
+        return num / 2**128 * 1e12
     
     def get_token_position(self):
         position = self.clearing_house.functions.getAccountNetTokenPosition(
@@ -158,9 +166,13 @@ class Rage():
         await asyncio.sleep(10)
         current_position = self.get_token_position()
         if abs(current_position - original_position) >= 0.01:
-            print(f'Order placed on Rage, size is: {size}. Current position is: {current_position}')
+            text = f'Order placed on Rage, size is: {size}. Current position is: {current_position}'
+            Discord().send_message(text)
+            print(text)
         else:
-            print(f"Order wasn't placed on Rage, size is: {size}. Current position is: {current_position}")
+            text = f"Order wasn't placed on Rage, size is: {size}. Current position is: {current_position}"
+            Discord().send_message(text)
+            print(text)
     
     def is_filled(self, original_position):
         current_position = self.get_token_position()
@@ -171,7 +183,7 @@ class Rage():
     def simulate_swap(self, size): 
         amount = self.w3.toWei(abs(size), 'ether') * (size > 0) - self.w3.toWei(abs(size), 'ether') * (size < 0)
         swap_simulation = self.simulate.functions.simulateSwapView(
-            GOERLI_CLEARING_HOUSE_ADDR,
+            MAINNET_CLEARING_HOUSE_ADDR,
             self.pool_id,
             amount,
             0,
@@ -194,11 +206,11 @@ async def main():
             discord.send_message('Need manual adjust position')
             break
         dydx_price = float(dydx.get_price_data(MARKET_ETH_USD)['index_price'])
-        rage_fit_price = (rage.simulate_swap(0.1) + rage.simulate_swap(-0.1)) / 2
-        price_dif = rage_fit_price - dydx_price
+        rage_mark_price = rage.get_perp_price()
+        price_dif = rage_mark_price - dydx_price
         print(f'----------------------------------------------------------------------------\
               \nmonitoring, price diff is: {price_dif}')
-        if abs(price_dif) >= 588:
+        if abs(price_dif) >= 20:
             print('Possible arbitrage opportunity appeared!!!\n')
             discord.send_message('Possible arbitrage opportunity appeared!!!')
             if price_dif < 0:
@@ -206,15 +218,17 @@ async def main():
                 rage_long_available_size_list = [l for l in rage_long_size_list if rage.simulate_swap(l) - dydx_price <= -20]
                 biggest_avaiable_size = max(rage_long_available_size_list)
                 rage_price = rage.simulate_swap(biggest_avaiable_size)
-                await asyncio.gather(rage.place_order(3000, biggest_avaiable_size), 
+                await asyncio.gather(rage.place_order(rage_price + 5, biggest_avaiable_size), 
                                      dydx.place_market_order(MARKET_ETH_USD, 'SELL', str(biggest_avaiable_size)))
+                discord.send_message(f'***Tried long on Rage and short on dYdX, size is: {biggest_avaiable_size}***')
             if price_dif > 0:
                 rage_short_size_list = [-0.5, -0.6, -0.7, -0.8, -0.9, -1.0]
                 rage_short_available_size_list = [s for s in rage_short_size_list if rage.simulate_swap(s) - dydx_price >= 20]
                 biggest_avaiable_size = min(rage_short_available_size_list)
                 rage_price = rage.simulate_swap(biggest_avaiable_size)
-                await asyncio.gather(rage.place_order(1000, biggest_avaiable_size), 
+                await asyncio.gather(rage.place_order(rage_price - 5, biggest_avaiable_size), 
                         dydx.place_market_order(MARKET_ETH_USD, 'BUY', str(abs(biggest_avaiable_size))))
+                discord.send_message(f'***Tried short on Rage and long on dYdX, size is: {biggest_avaiable_size}***')
         await asyncio.sleep(60)
 
 asyncio.run(main())
@@ -226,3 +240,6 @@ asyncio.run(main())
 #         clearing_house = w3.eth.contract(address=GOERLI_CLEARING_HOUSE_LOGIC_ADDR, abi=CLEARING_HOUSE_LOGIC_ABI)
 #         transaction = w3.eth.getTransaction(tx)
 #         print(clearing_house.decode_function_input(transaction.input))
+
+# 5236294411836365928780107511123
+# 534993781394177305932219993547
