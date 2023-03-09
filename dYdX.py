@@ -3,6 +3,7 @@ from dydx_constants import *
 from rage_constants import *
 from dydx3 import Client
 from web3 import Web3
+import requests
 import asyncio
 import dotenv
 import time
@@ -199,9 +200,15 @@ async def main():
     rage = Rage()
     discord = Discord()
     while 1:
-        dydx_position = abs(float(dydx.get_account_data()['position']))
+        await asyncio.sleep(1)
+        try:
+            dydx_position = abs(float(dydx.get_account_data()['position']))
+        except requests.exceptions.ConnectionError as e:
+            Discord.send_message('Connection error')
+            await asyncio.sleep(5)
+            dydx_position = abs(float(dydx.get_account_data()['position']))
         rage_position = abs(rage.get_token_position())
-        if abs(dydx_position - rage_position) >= 0.1 or dydx_position >= 10 or rage_position >= 10:
+        if abs(dydx_position - rage_position) >= 0.1 or dydx_position >= 5 or rage_position >= 5:
             print('Need manual adjust position')
             discord.send_message('Need manual adjust position')
             break
@@ -210,36 +217,27 @@ async def main():
         price_dif = rage_mark_price - dydx_price
         print(f'----------------------------------------------------------------------------\
               \nmonitoring, price diff is: {price_dif}')
-        if abs(price_dif) >= 20:
+        if abs(price_dif) >= 15:
             print('Possible arbitrage opportunity appeared!!!\n')
             discord.send_message('Possible arbitrage opportunity appeared!!!')
             if price_dif < 0:
                 rage_long_size_list = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
-                rage_long_available_size_list = [l for l in rage_long_size_list if rage.simulate_swap(l) - dydx_price <= -20]
-                biggest_avaiable_size = max(rage_long_available_size_list)
-                rage_price = rage.simulate_swap(biggest_avaiable_size)
-                await asyncio.gather(rage.place_order(rage_price + 5, biggest_avaiable_size), 
-                                     dydx.place_market_order(MARKET_ETH_USD, 'SELL', str(biggest_avaiable_size)))
-                discord.send_message(f'***Tried long on Rage and short on dYdX, size is: {biggest_avaiable_size}***')
+                rage_long_available_size_list = [l for l in rage_long_size_list if rage.simulate_swap(l) - dydx_price <= -15]
+                if rage_long_available_size_list:
+                    biggest_avaiable_size = max(rage_long_available_size_list)
+                    rage_price = rage.simulate_swap(biggest_avaiable_size)
+                    await asyncio.gather(rage.place_order(rage_price + 5, biggest_avaiable_size), 
+                                        dydx.place_market_order(MARKET_ETH_USD, 'SELL', str(biggest_avaiable_size)))
+                    discord.send_message(f'***Tried long on Rage and short on dYdX, size is: {biggest_avaiable_size}***')
             if price_dif > 0:
                 rage_short_size_list = [-0.5, -0.6, -0.7, -0.8, -0.9, -1.0]
-                rage_short_available_size_list = [s for s in rage_short_size_list if rage.simulate_swap(s) - dydx_price >= 20]
-                biggest_avaiable_size = min(rage_short_available_size_list)
-                rage_price = rage.simulate_swap(biggest_avaiable_size)
-                await asyncio.gather(rage.place_order(rage_price - 5, biggest_avaiable_size), 
-                        dydx.place_market_order(MARKET_ETH_USD, 'BUY', str(abs(biggest_avaiable_size))))
-                discord.send_message(f'***Tried short on Rage and long on dYdX, size is: {biggest_avaiable_size}***')
+                rage_short_available_size_list = [s for s in rage_short_size_list if rage.simulate_swap(s) - dydx_price >= 15]
+                if rage_short_available_size_list:
+                    biggest_avaiable_size = min(rage_short_available_size_list)
+                    rage_price = rage.simulate_swap(biggest_avaiable_size)
+                    await asyncio.gather(rage.place_order(rage_price - 5, biggest_avaiable_size), 
+                            dydx.place_market_order(MARKET_ETH_USD, 'BUY', str(abs(biggest_avaiable_size))))
+                    discord.send_message(f'***Tried short on Rage and long on dYdX, size is: {biggest_avaiable_size}***')
         await asyncio.sleep(60)
 
 asyncio.run(main())
-# market_buy_id = DYDX().place_market_order(MARKET_BTC_USD, ORDER_SIDE_BUY, '0.001')
-# print(market_buy_id)
-
-# def decode_input(tx):
-#         w3 = Web3(Web3.HTTPProvider(os.getenv('ARBITRUM_GOERLI_RPC')))
-#         clearing_house = w3.eth.contract(address=GOERLI_CLEARING_HOUSE_LOGIC_ADDR, abi=CLEARING_HOUSE_LOGIC_ABI)
-#         transaction = w3.eth.getTransaction(tx)
-#         print(clearing_house.decode_function_input(transaction.input))
-
-# 5236294411836365928780107511123
-# 534993781394177305932219993547
