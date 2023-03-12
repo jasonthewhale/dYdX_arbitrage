@@ -150,7 +150,7 @@ class Rage():
         )
         nonce = self.w3.eth.getTransactionCount(WALLET)
         tx_params = {
-            'chainId': 421613,
+            'chainId': 42161,
             'value':  0,
             'gasPrice': self.w3.toWei(0.1, 'gwei'),
             'gas': 1877644,
