@@ -195,7 +195,7 @@ class Rage():
         price_per_token = simulation_price / size
         return price_per_token
     
-    def multi_call(self, sizes):
+    def multi_simulate(self, sizes):
         amounts = []
         for i in sizes:
             amount = self.w3.toWei(abs(i), 'ether') * (i > 0) - self.w3.toWei(abs(i), 'ether') * (i < 0)
@@ -234,7 +234,7 @@ async def main():
             discord.send_message('Possible arbitrage opportunity appeared!!!')
             if price_dif < 0:
                 rage_long_size_list = [0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
-                price_list = rage.multi_call(rage_long_size_list)
+                price_list = rage.multi_simulate(rage_long_size_list)
                 rage_long_available_size_list = [l for l in price_list if l - dydx_price <= -15]
                 if rage_long_available_size_list:
                     biggest_avaiable_size = max(rage_long_available_size_list)
@@ -244,7 +244,7 @@ async def main():
                     discord.send_message(f'***Tried long on Rage and short on dYdX, size is: {biggest_avaiable_size}***')
             if price_dif > 0:
                 rage_short_size_list = [-0.3, -0.4, -0.5, -0.6, -0.7, -0.8, -0.9, -1.0]
-                price_list = rage.multi_call(rage_short_size_list)
+                price_list = rage.multi_simulate(rage_short_size_list)
                 rage_short_available_size_list = [s for s in price_list if s - dydx_price >= 15]
                 if rage_short_available_size_list:
                     biggest_avaiable_size = min(rage_short_available_size_list)
