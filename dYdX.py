@@ -115,6 +115,7 @@ class Rage():
         self.w3 = w3
         self.clearing_house = w3.eth.contract(address=MAINNET_CLEARING_HOUSE_ADDR, abi=CLEARING_HOUSE_ABI)
         self.simulate = w3.eth.contract(address=MAINNET_SIMULATOR_ADDR, abi=SIMULATOR_ABI)
+        self.multi_call = w3.eth.contract(address=MAINNET_MULTI_CALL_ADDR, abi=MULTI_CALL_ABI)
         self.pool_id = 2721558366
         self.account_id = 10491
 
@@ -150,7 +151,7 @@ class Rage():
         )
         nonce = self.w3.eth.getTransactionCount(WALLET)
         tx_params = {
-            'chainId': 42161,
+            'chainId': 421613,
             'value':  0,
             'gasPrice': self.w3.toWei(0.1, 'gwei'),
             'gas': 1877644,
@@ -193,6 +194,16 @@ class Rage():
         simulation_price = swap_simulation[2] / 1e6
         price_per_token = simulation_price / size
         return price_per_token
+    
+    def multi_call(self, sizes):
+        amounts = []
+        for i in sizes:
+            amount = self.w3.toWei(abs(i), 'ether') * (i > 0) - self.w3.toWei(abs(i), 'ether') * (i < 0)
+            amounts.append(amount)
+        price_list = self.multi_call.functions.multiSimulate(amounts).call()
+        for i in range(len(sizes)):
+            price_list[i] = price_list[i] / sizes[i] / 1e6
+        return price_list
 
 
 async def main():
@@ -200,43 +211,46 @@ async def main():
     rage = Rage()
     discord = Discord()
     while 1:
+        await asyncio.sleep(1)
         try:
             dydx_position = abs(float(dydx.get_account_data()['position']))
         except requests.exceptions.ConnectionError as e:
-            discord.send_message('Connection error', e)
+            discord.send_message('Connection error ' + str(e))
             await asyncio.sleep(5)
-            return
+            dydx_position = abs(float(dydx.get_account_data()['position']))
         rage_position = abs(rage.get_token_position())
         if abs(dydx_position - rage_position) >= 0.1 or dydx_position >= 5 or rage_position >= 5:
             print('Need manual adjust position')
             discord.send_message('Need manual adjust position')
             break
         dydx_price = float(dydx.get_price_data(MARKET_ETH_USD)['index_price'])
-        rage_mark_price = rage.get_perp_price()
-        price_dif = rage_mark_price - dydx_price
+        rage_long_price = rage.simulate_swap(0.1)
+        rage_short_price =  rage.simulate_swap(-0.1)
+        price_dif = max(abs(rage_long_price - dydx_price), abs(rage_short_price - dydx_price))
         print(f'----------------------------------------------------------------------------\
               \nmonitoring, price diff is: {price_dif}')
         if abs(price_dif) >= 15:
             print('Possible arbitrage opportunity appeared!!!\n')
             discord.send_message('Possible arbitrage opportunity appeared!!!')
             if price_dif < 0:
-                rage_long_size_list = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
-                rage_long_available_size_list = [l for l in rage_long_size_list if rage.simulate_swap(l) - float(dydx.get_price_data(MARKET_ETH_USD)['index_price']) <= -15]
+                rage_long_size_list = [0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+                price_list = rage.multi_call(rage_long_size_list)
+                rage_long_available_size_list = [l for l in price_list if l - dydx_price <= -15]
                 if rage_long_available_size_list:
                     biggest_avaiable_size = max(rage_long_available_size_list)
                     rage_price = rage.simulate_swap(biggest_avaiable_size)
-                    await asyncio.gather(rage.place_order(rage_price + 5, biggest_avaiable_size),
+                    await asyncio.gather(rage.place_order(rage_price + 5, biggest_avaiable_size), 
                                         dydx.place_market_order(MARKET_ETH_USD, 'SELL', str(biggest_avaiable_size)))
                     discord.send_message(f'***Tried long on Rage and short on dYdX, size is: {biggest_avaiable_size}***')
             if price_dif > 0:
-                rage_short_size_list = [-0.5, -0.6, -0.7, -0.8, -0.9, -1.0]
-                rage_short_available_size_list = [s for s in rage_short_size_list if rage.simulate_swap(s) - float(dydx.get_price_data(MARKET_ETH_USD)['index_price']) >= 15]
+                rage_short_size_list = [-0.3, -0.4, -0.5, -0.6, -0.7, -0.8, -0.9, -1.0]
+                price_list = rage.multi_call(rage_short_size_list)
+                rage_short_available_size_list = [s for s in price_list if s - dydx_price >= 15]
                 if rage_short_available_size_list:
                     biggest_avaiable_size = min(rage_short_available_size_list)
                     rage_price = rage.simulate_swap(biggest_avaiable_size)
-                    await asyncio.gather(rage.place_order(rage_price - 5, biggest_avaiable_size),
+                    await asyncio.gather(rage.place_order(rage_price - 5, biggest_avaiable_size), 
                             dydx.place_market_order(MARKET_ETH_USD, 'BUY', str(abs(biggest_avaiable_size))))
                     discord.send_message(f'***Tried short on Rage and long on dYdX, size is: {biggest_avaiable_size}***')
         await asyncio.sleep(60)
-
 asyncio.run(main())
